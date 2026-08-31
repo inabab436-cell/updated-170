@@ -147,6 +147,12 @@ export async function recordOfferRedemptionsForOrders(
             return offerAppliesToOrder(o, pname, order);
           });
 
+      // When the ORDER itself records which offers were applied, the discount
+      // was already given to this customer: the beneficiary MUST be counted,
+      // whatever the offer's current limits say. Re-checking the caps here is
+      // what used to silently skip real beneficiaries.
+      const forced = applied.length > 0;
+
       for (const offer of candidates) {
         // Existing rows for this offer decide both usage limits below.
         const { data: existing } = await admin
@@ -159,12 +165,13 @@ export async function recordOfferRedemptionsForOrders(
 
         // "Once per customer": a customer who already benefited is never
         // counted again, and the offer simply does not apply to that order.
-        if (offer.usage_limit_type === "once_per_customer" && alreadyUsed) continue;
+        if (!forced && offer.usage_limit_type === "once_per_customer" && alreadyUsed) continue;
 
         // Global cap: a NEW beneficiary can never push the offer past its
         // maximum number of beneficiaries (existing ones may still reorder
         // when the offer is per-order).
         if (
+          !forced &&
           offer.max_redemptions != null &&
           offer.max_redemptions > 0 &&
           !alreadyUsed &&
@@ -172,6 +179,7 @@ export async function recordOfferRedemptionsForOrders(
         ) {
           continue;
         }
+
 
         const { error } = await admin.from("offer_redemptions").insert({
           offer_id: offer.id,
