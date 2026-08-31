@@ -3446,6 +3446,28 @@ export const Route = createFileRoute("/api/chat-ai")({
 
             }
 
+            // An UPDATED existing order must also remember its offers: without
+            // this, an amendment left `applied_offer_ids` empty and the
+            // beneficiary was never recorded at payment confirmation. Already
+            // fixed offers are KEPT (never dropped by a later re-pricing).
+            if (latestConversationOrder) {
+              try {
+                const { mergeOfferIds } = await import("@/lib/offer-quote-lock.server");
+                await supabase
+                  .from("orders")
+                  .update({
+                    applied_offer_ids: mergeOfferIds(
+                      latestConversationOrder.applied_offer_ids,
+                      pricing.applied_offers.map((o) => o.offer_id),
+                    ),
+                  })
+                  .eq("order_number", orderNumber);
+              } catch {
+                /* applied_offer_ids column not present yet */
+              }
+            }
+
+
             // The order exists: every field it carries becomes COMMITTED and
             // the collection phase is closed for every later run.
             orderState = commitOrderState(orderState, {
