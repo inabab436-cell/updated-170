@@ -176,7 +176,13 @@ export async function offersForNewPurchase(
     customerKeys?: string[];
   },
 ): Promise<OfferRow[]> {
-  const offers = await offersForOrderPricing(admin, opts);
+  // A NEW purchase is judged on its own: the offers pinned on the OLD (already
+  // paid) part are not inherited — that part keeps its own frozen discount.
+  const offers = await offersForOrderPricing(admin, {
+    conversationId: opts.conversationId,
+    liveOffers: opts.liveOffers,
+    existingOrder: null,
+  });
   const consumed = await consumedOfferIds(admin, {
     conversationId: opts.conversationId,
     customerKeys: opts.customerKeys,
