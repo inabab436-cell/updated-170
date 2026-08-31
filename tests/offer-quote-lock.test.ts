@@ -74,3 +74,13 @@ describe("which offers may price an order", () => {
     expect(priced.total).toBe(100);
   });
 });
+
+describe("once-per-customer guard", () => {
+  it("drops an offer the customer already used, keeps per-order offers", async () => {
+    const { dropConsumedOnceOffers } = await import("@/lib/offer-quote-lock.server");
+    const once = { id: "a", usage_limit_type: "once_per_customer" } as any;
+    const per = { id: "b", usage_limit_type: "per_order" } as any;
+    expect(dropConsumedOnceOffers([once, per], ["a"]).map((o: any) => o.id)).toEqual(["b"]);
+    expect(dropConsumedOnceOffers([once, per], []).length).toBe(2);
+  });
+});
