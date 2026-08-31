@@ -1380,12 +1380,18 @@ export const Route = createFileRoute("/api/chat-ai")({
               // Databases that already carry the unpaid-addition columns expose
               // the pending part; older ones fall back to the base columns.
               const withPending = await read(
-                `${base}, pending_items, pending_subtotal, pending_discount, pending_total, pending_since`,
+                `${base}, applied_offer_ids, pending_items, pending_subtotal, pending_discount, pending_total, pending_since`,
               );
               if (!withPending.error) {
                 return (withPending.data ?? []) as unknown as Array<Record<string, unknown>>;
               }
+              // Databases without applied_offer_ids still expose the rest.
+              const withOffers = await read(`${base}, applied_offer_ids`);
+              if (!withOffers.error) {
+                return (withOffers.data ?? []) as unknown as Array<Record<string, unknown>>;
+              }
               const { data: orders } = await read(base);
+
               return (orders ?? []) as unknown as Array<Record<string, unknown>>;
             } catch (_) {
               // orders table may not exist; skip silently.
