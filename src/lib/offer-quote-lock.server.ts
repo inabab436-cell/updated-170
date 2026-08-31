@@ -120,3 +120,66 @@ export async function offersForOrderPricing(
   const rows = await offersByIds(admin, ids);
   return pricingOffers({ lockedIds: ids, lockedOffers: rows, liveOffers: opts.liveOffers });
 }
+
+/**
+ * ONCE-PER-CUSTOMER GUARD — an offer limited to one use per customer must never
+ * price a NEW purchase of a customer who already benefited from it, even though
+ * that offer stays pinned on the earlier order (its old discount is untouched).
+ */
+export function dropConsumedOnceOffers(offers: OfferRow[], consumedIds: string[]): OfferRow[] {
+  if (!consumedIds.length) return offers;
+  const used = new Set(consumedIds.map(String));
+  return offers.filter(
+    (o) => !(o.usage_limit_type === "once_per_customer" && used.has(String(o.id))),
+  );
+}
+
+/** Offer ids this customer already benefited from (recorded redemptions). */
+export async function consumedOfferIds(
+  admin: any,
+  opts: { conversationId?: string | null; customerKeys?: string[] },
+): Promise<string[]> {
+  const ids: string[] = [];
+  try {
+    if (opts.conversationId) {
+      const { data } = await admin
+        .from("offer_redemptions")
+        .select("offer_id")
+        .eq("conversation_id", String(opts.conversationId));
+      for (const r of (data ?? []) as any[]) ids.push(String(r.offer_id));
+    }
+    const keys = (opts.customerKeys ?? []).filter(Boolean).map(String);
+    if (keys.length) {
+      const { data } = await admin
+        .from("offer_redemptions")
+        .select("offer_id")
+        .in("customer_key", keys);
+      for (const r of (data ?? []) as any[]) ids.push(String(r.offer_id));
+    }
+  } catch {
+    /* redemption table unreadable — no guard, pricing keeps today's behaviour */
+  }
+  return mergeOfferIds(ids, []);
+}
+
+/**
+ * Offers allowed to price a NEW purchase (a new order, or an addition on an
+ * already paid order): the quoted/locked set minus every once-per-customer
+ * offer this customer already used.
+ */
+export async function offersForNewPurchase(
+  admin: any,
+  opts: {
+    conversationId: string | null | undefined;
+    liveOffers: OfferRow[];
+    existingOrder?: Record<string, unknown> | null;
+    customerKeys?: string[];
+  },
+): Promise<OfferRow[]> {
+  const offers = await offersForOrderPricing(admin, opts);
+  const consumed = await consumedOfferIds(admin, {
+    conversationId: opts.conversationId,
+    customerKeys: opts.customerKeys,
+  });
+  return dropConsumedOnceOffers(offers, consumed);
+}

@@ -2183,7 +2183,23 @@ export const Route = createFileRoute("/api/chat-ai")({
               return { result: { ok: false, error: "unknown_products", unknown_product_ids: unknown } };
             }
             const { quoteCart } = await import("@/lib/offer-engine.server");
-            const quote = quoteCart(liveOffers, lines, currency);
+            // A once-per-customer offer already used by this customer is never
+            // quoted again, so the price the customer is told matches the price
+            // the order will really carry.
+            let quotableOffers = liveOffers;
+            try {
+              const { consumedOfferIds, dropConsumedOnceOffers } = await import(
+                "@/lib/offer-quote-lock.server"
+              );
+              const consumed = await consumedOfferIds(supabase as any, {
+                conversationId: conversation_id,
+                customerKeys: conversation_id ? [`v:${String(conversation_id)}`] : [],
+              });
+              quotableOffers = dropConsumedOnceOffers(liveOffers, consumed);
+            } catch {
+              console.error("[chat-ai] once-per-customer guard skipped");
+            }
+            const quote = quoteCart(quotableOffers, lines, currency);
             // QUOTE LOCK — the discount the customer is being told about is
             // recorded now, while the offer is live. create_order prices the
             // order with these offers only, so the quoted discount survives the
@@ -3083,13 +3099,23 @@ export const Route = createFileRoute("/api/chat-ai")({
                 existingPending as any,
                 additionOnly.items as any,
               );
-              const { offersForOrderPricing: additionOffersFor } = await import(
-                "@/lib/offer-quote-lock.server"
-              );
-              const additionOffers = await additionOffersFor(supabase as any, {
+              // The addition is a NEW purchase: an offer limited to one use per
+              // customer was already consumed by the paid part and must NOT
+              // discount the added pieces (the old discount stays untouched).
+              const { offersForNewPurchase } = await import("@/lib/offer-quote-lock.server");
+              const additionOffers = await offersForNewPurchase(supabase as any, {
                 conversationId: conversation_id,
                 liveOffers,
                 existingOrder: latestConversationOrder,
+                customerKeys: [
+                  latestConversationOrder.customer_id
+                    ? `c:${String(latestConversationOrder.customer_id)}`
+                    : "",
+                  latestConversationOrder.customer_phone
+                    ? `p:${String(latestConversationOrder.customer_phone)}`
+                    : "",
+                  conversation_id ? `v:${String(conversation_id)}` : "",
+                ].filter(Boolean),
               });
               const additionPricing = priceOrderItems({
                 products: merchantData.products as any,
