@@ -148,10 +148,11 @@ export const confirmOrderPayment = createServerFn({ method: "POST" })
         throw new Error(r.error === "cancelled" ? "الطلب ملغي." : "الطلب غير موجود.");
       }
       // The offer/discount is counted for this customer ONLY now, after the
-      // merchant confirmed the payment of the order. Newer databases do this
-      // inside the same transaction as the stock deduction (offers_handled);
-      // older ones are covered by the identical application-side pass.
-      if (r.offers_handled !== true) {
+      // merchant confirmed the payment of the order. The application-side pass
+      // ALWAYS runs (it is idempotent) because the in-database pass re-evaluates
+      // the offer's current limits and therefore silently skips a beneficiary
+      // whose discount was already pinned on the order (`applied_offer_ids`).
+      {
         const { recordOfferRedemptionsForOrders } = await import(
           "@/lib/offer-redemptions.server"
         );
@@ -160,6 +161,7 @@ export const confirmOrderPayment = createServerFn({ method: "POST" })
           orderIds: [String(data.id)],
         });
       }
+
       // Confirming the payment from the orders page must wake the agent up in
       // the linked conversation too — exactly like the conversation button.
       try {
