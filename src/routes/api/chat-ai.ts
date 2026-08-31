@@ -1380,12 +1380,18 @@ export const Route = createFileRoute("/api/chat-ai")({
               // Databases that already carry the unpaid-addition columns expose
               // the pending part; older ones fall back to the base columns.
               const withPending = await read(
-                `${base}, pending_items, pending_subtotal, pending_discount, pending_total, pending_since`,
+                `${base}, applied_offer_ids, pending_items, pending_subtotal, pending_discount, pending_total, pending_since`,
               );
               if (!withPending.error) {
                 return (withPending.data ?? []) as unknown as Array<Record<string, unknown>>;
               }
+              // Databases without applied_offer_ids still expose the rest.
+              const withOffers = await read(`${base}, applied_offer_ids`);
+              if (!withOffers.error) {
+                return (withOffers.data ?? []) as unknown as Array<Record<string, unknown>>;
+              }
               const { data: orders } = await read(base);
+
               return (orders ?? []) as unknown as Array<Record<string, unknown>>;
             } catch (_) {
               // orders table may not exist; skip silently.
@@ -1788,11 +1794,21 @@ export const Route = createFileRoute("/api/chat-ai")({
             if (items.length) {
               const { priceOrderItems } = await import("@/lib/order-pricing.server");
               const { buildOrderPricingFactsBlock } = await import("@/lib/offer-upsell");
+              // The offers already fixed on the order (or quoted for this
+              // conversation) — never a fresh re-evaluation, so an offer that
+              // ended after the order was priced cannot erase its discount.
+              const { offersForOrderPricing } = await import("@/lib/offer-quote-lock.server");
+              const factsOffers = await offersForOrderPricing(supabase as any, {
+                conversationId: conversation_id,
+                liveOffers,
+                existingOrder: latestConversationOrder,
+              });
               const pricing = priceOrderItems({
                 products: merchantData.products as any,
-                offers: liveOffers,
+                offers: factsOffers,
                 items: items as any,
               });
+
               orderPricingFactsBlock = buildOrderPricingFactsBlock({
                 currency: pricing.currency,
                 subtotal: pricing.subtotal,
@@ -2168,6 +2184,23 @@ export const Route = createFileRoute("/api/chat-ai")({
             }
             const { quoteCart } = await import("@/lib/offer-engine.server");
             const quote = quoteCart(liveOffers, lines, currency);
+            // QUOTE LOCK — the discount the customer is being told about is
+            // recorded now, while the offer is live. create_order prices the
+            // order with these offers only, so the quoted discount survives the
+            // offer ending, and an unquoted discount can never appear.
+            try {
+              const { lockQuotedOffers } = await import("@/lib/offer-quote-lock.server");
+              await lockQuotedOffers(supabase as any, {
+                conversationId: conversation_id,
+                merchantId: merchant_id,
+                offers: quote.offers
+                  .filter((o) => o.applies)
+                  .map((o) => ({ offer_id: o.offer_id, discount_amount: o.discount_amount })),
+              });
+            } catch (e) {
+              console.error("[chat-ai] offer quote lock skipped");
+            }
+
             // NEAR-MISS: how many MORE of the same eligible product unlock the
             // offer, and what the customer would pay then. Computed here so the
             // agent never has to reason about it (and never stays silent).
@@ -3050,11 +3083,20 @@ export const Route = createFileRoute("/api/chat-ai")({
                 existingPending as any,
                 additionOnly.items as any,
               );
+              const { offersForOrderPricing: additionOffersFor } = await import(
+                "@/lib/offer-quote-lock.server"
+              );
+              const additionOffers = await additionOffersFor(supabase as any, {
+                conversationId: conversation_id,
+                liveOffers,
+                existingOrder: latestConversationOrder,
+              });
               const additionPricing = priceOrderItems({
                 products: merchantData.products as any,
-                offers: liveOffers,
+                offers: additionOffers,
                 items: pendingItems as any,
               });
+
               for (let i = 0; i < pendingItems.length; i++) {
                 const p = additionPricing.items[i];
                 if (!p) continue;
@@ -3195,11 +3237,22 @@ export const Route = createFileRoute("/api/chat-ai")({
             // this the order value is zero, so no offer minimum can ever be
             // met and no beneficiary is ever recorded.
             const { priceOrderItems } = await import("@/lib/order-pricing.server");
+            // Only the offers that were really QUOTED to this customer (or are
+            // already fixed on the order) may price it. A quoted discount is
+            // therefore kept even if the offer ended in the meantime, and a
+            // discount the customer never saw is never applied.
+            const { offersForOrderPricing } = await import("@/lib/offer-quote-lock.server");
+            const orderOffers = await offersForOrderPricing(supabase as any, {
+              conversationId: conversation_id,
+              liveOffers,
+              existingOrder: latestConversationOrder,
+            });
             const pricing = priceOrderItems({
               products: merchantData.products as any,
-              offers: liveOffers,
+              offers: orderOffers,
                items: orderItemsToStore,
             });
+
             for (let i = 0; i < orderItemsToStore.length; i++) {
               const p = pricing.items[i];
               if (!p) continue;
@@ -3398,6 +3451,28 @@ export const Route = createFileRoute("/api/chat-ai")({
               }
 
             }
+
+            // An UPDATED existing order must also remember its offers: without
+            // this, an amendment left `applied_offer_ids` empty and the
+            // beneficiary was never recorded at payment confirmation. Already
+            // fixed offers are KEPT (never dropped by a later re-pricing).
+            if (latestConversationOrder) {
+              try {
+                const { mergeOfferIds } = await import("@/lib/offer-quote-lock.server");
+                await supabase
+                  .from("orders")
+                  .update({
+                    applied_offer_ids: mergeOfferIds(
+                      latestConversationOrder.applied_offer_ids,
+                      pricing.applied_offers.map((o) => o.offer_id),
+                    ),
+                  })
+                  .eq("order_number", orderNumber);
+              } catch {
+                /* applied_offer_ids column not present yet */
+              }
+            }
+
 
             // The order exists: every field it carries becomes COMMITTED and
             // the collection phase is closed for every later run.
