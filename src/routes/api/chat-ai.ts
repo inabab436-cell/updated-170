@@ -1788,11 +1788,21 @@ export const Route = createFileRoute("/api/chat-ai")({
             if (items.length) {
               const { priceOrderItems } = await import("@/lib/order-pricing.server");
               const { buildOrderPricingFactsBlock } = await import("@/lib/offer-upsell");
+              // The offers already fixed on the order (or quoted for this
+              // conversation) — never a fresh re-evaluation, so an offer that
+              // ended after the order was priced cannot erase its discount.
+              const { offersForOrderPricing } = await import("@/lib/offer-quote-lock.server");
+              const factsOffers = await offersForOrderPricing(supabase as any, {
+                conversationId: conversation_id,
+                liveOffers,
+                existingOrder: latestConversationOrder,
+              });
               const pricing = priceOrderItems({
                 products: merchantData.products as any,
-                offers: liveOffers,
+                offers: factsOffers,
                 items: items as any,
               });
+
               orderPricingFactsBlock = buildOrderPricingFactsBlock({
                 currency: pricing.currency,
                 subtotal: pricing.subtotal,
