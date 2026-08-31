@@ -3231,11 +3231,22 @@ export const Route = createFileRoute("/api/chat-ai")({
             // this the order value is zero, so no offer minimum can ever be
             // met and no beneficiary is ever recorded.
             const { priceOrderItems } = await import("@/lib/order-pricing.server");
+            // Only the offers that were really QUOTED to this customer (or are
+            // already fixed on the order) may price it. A quoted discount is
+            // therefore kept even if the offer ended in the meantime, and a
+            // discount the customer never saw is never applied.
+            const { offersForOrderPricing } = await import("@/lib/offer-quote-lock.server");
+            const orderOffers = await offersForOrderPricing(supabase as any, {
+              conversationId: conversation_id,
+              liveOffers,
+              existingOrder: latestConversationOrder,
+            });
             const pricing = priceOrderItems({
               products: merchantData.products as any,
-              offers: liveOffers,
+              offers: orderOffers,
                items: orderItemsToStore,
             });
+
             for (let i = 0; i < orderItemsToStore.length; i++) {
               const p = pricing.items[i];
               if (!p) continue;
