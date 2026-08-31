@@ -3077,11 +3077,20 @@ export const Route = createFileRoute("/api/chat-ai")({
                 existingPending as any,
                 additionOnly.items as any,
               );
+              const { offersForOrderPricing: additionOffersFor } = await import(
+                "@/lib/offer-quote-lock.server"
+              );
+              const additionOffers = await additionOffersFor(supabase as any, {
+                conversationId: conversation_id,
+                liveOffers,
+                existingOrder: latestConversationOrder,
+              });
               const additionPricing = priceOrderItems({
                 products: merchantData.products as any,
-                offers: liveOffers,
+                offers: additionOffers,
                 items: pendingItems as any,
               });
+
               for (let i = 0; i < pendingItems.length; i++) {
                 const p = additionPricing.items[i];
                 if (!p) continue;
