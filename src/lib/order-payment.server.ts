@@ -131,9 +131,11 @@ export async function confirmPendingOrdersForConversation(
         shortages: Array.isArray(r.shortages) ? r.shortages : [],
       });
     } else {
-      // Databases that record the redemption inside the same transaction as the
-      // stock deduction need no second pass here.
-      if (r.offers_handled !== true) confirmedIds.push(String(o.id));
+      // The application-side recording pass always runs: it is idempotent and,
+      // unlike the in-database pass, it counts an offer that was pinned on the
+      // order even if that offer has meanwhile ended or hit its cap.
+      confirmedIds.push(String(o.id));
+
       results.push({
         orderNumber: o.order_number ?? null,
         ok: true,
