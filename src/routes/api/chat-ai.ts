@@ -2168,6 +2168,23 @@ export const Route = createFileRoute("/api/chat-ai")({
             }
             const { quoteCart } = await import("@/lib/offer-engine.server");
             const quote = quoteCart(liveOffers, lines, currency);
+            // QUOTE LOCK — the discount the customer is being told about is
+            // recorded now, while the offer is live. create_order prices the
+            // order with these offers only, so the quoted discount survives the
+            // offer ending, and an unquoted discount can never appear.
+            try {
+              const { lockQuotedOffers } = await import("@/lib/offer-quote-lock.server");
+              await lockQuotedOffers(supabase as any, {
+                conversationId: conversation_id,
+                merchantId: merchant_id,
+                offers: quote.offers
+                  .filter((o) => o.applies)
+                  .map((o) => ({ offer_id: o.offer_id, discount_amount: o.discount_amount })),
+              });
+            } catch (e) {
+              console.error("[chat-ai] offer quote lock skipped");
+            }
+
             // NEAR-MISS: how many MORE of the same eligible product unlock the
             // offer, and what the customer would pay then. Computed here so the
             // agent never has to reason about it (and never stays silent).
