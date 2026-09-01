@@ -24,6 +24,20 @@ export interface OfferBeneficiary {
   uses: number;
 }
 
+/**
+ * An order that already carries the offer's discount but whose payment is not
+ * confirmed yet. The discount stays pinned on that order, while the customer is
+ * NOT counted among the beneficiaries until the payment is confirmed.
+ */
+export interface OfferPendingOrder {
+  id: string;
+  order_number: string | null;
+  conversation_id: string | null;
+  customer_name: string | null;
+  order_total: number | null;
+  created_at: string;
+}
+
 export interface OfferDTO extends OfferRow {
   /** Resolved product name for product-scoped offers. */
   product_name: string | null;
@@ -31,8 +45,12 @@ export interface OfferDTO extends OfferRow {
   state: "live" | "scheduled" | "ended";
   /** Customers counted only after the merchant confirmed their payment. */
   beneficiaries: OfferBeneficiary[];
+  /** Orders holding the discount while payment is still unconfirmed. */
+  pending: OfferPendingOrder[];
   /** Total number of times the offer was used (all customers). */
   use_count: number;
+  /** True when the offer stopped because its limit of beneficiaries is full. */
+  limit_reached: boolean;
 }
 
 export interface OfferInput {
