@@ -3215,6 +3215,14 @@ export const Route = createFileRoute("/api/chat-ai")({
                 });
               }
 
+              // SHIPPING IS CHARGED ONCE PER ORDER. The addition rides on the
+              // same order, whose shipping was already billed, so the amount
+              // due for the addition is products only.
+              const alreadyChargedShipping = Math.max(
+                0,
+                Number(latestConversationOrder.shipping_cost) || 0,
+              );
+
               return {
                 result: {
                   ok: true,
@@ -3224,16 +3232,19 @@ export const Route = createFileRoute("/api/chat-ai")({
                   addition_total: additionPricing.total,
                   addition_discount: additionPricing.discount_total,
                   newly_due_amount: newlyDue,
+                  shipping_cost: alreadyChargedShipping,
+                  shipping_already_charged: true,
                   currency: additionCurrency,
                   payment_method: chosenMethod?.name ?? null,
                   message:
-                    `The addition was registered on the SAME order ${orderNumberForAddition} as a part that is NOT paid yet. The previously paid part keeps its price, its discount and its stock exactly as confirmed — never re-charge it and never re-open it. Tell the customer, in Egyptian Arabic, what was added and that the amount due for the addition ONLY is ${additionPricing.total} ${additionCurrency}` +
+                    `The addition was registered on the SAME order ${orderNumberForAddition} as a part that is NOT paid yet. The previously paid part keeps its price, its discount and its stock exactly as confirmed — never re-charge it and never re-open it. SHIPPING IS CHARGED ONCE PER ORDER: ${alreadyChargedShipping} ${additionCurrency} was already billed on this order, so do NOT add any shipping cost to the addition and never quote shipping twice. Tell the customer, in Egyptian Arabic, what was added and that the amount due for the addition ONLY is ${additionPricing.total} ${additionCurrency} (products only, shipping already paid on the order)` +
                     (additionPlan.requiresPayment && chosenMethod
                       ? `, then give them the payment instructions of ${chosenMethod.name}${chosenMethod.instructions ? `: ${chosenMethod.instructions}` : ""} and tell them it will be confirmed once the payment is received.`
                       : ", and tell them it will be confirmed shortly.") +
                     " Never say the addition is already paid, and never mention any system, tool or internal detail.",
                 },
                 createdOrderNumber: orderNumberForAddition,
+
                 manualHandover: additionPlan.requiresPayment,
               };
             }
@@ -3657,13 +3668,29 @@ export const Route = createFileRoute("/api/chat-ai")({
                 payment_method: chosenMethod?.name ?? null,
                 payment_guidance: paymentGuidance,
                 confirmation_message: confirmationMessage,
+                // AUTHORITATIVE amounts of the order as stored. Shipping is
+                // billed ONCE per order: on an amendment it is the same cost
+                // already on the order, never a second charge.
+                subtotal: pricing.subtotal,
+                discount: pricing.discount_total,
+                shipping_cost: shippingCost,
+                shipping_already_charged: Boolean(latestConversationOrder),
+                total: grandTotal,
+                currency: orderCurrency,
                 ...(quantityAdjustments.length
                   ? { quantity_adjustments: quantityAdjustments }
                   : {}),
 
                 message:
-                  "Order saved successfully. Your next reply MUST be exactly the confirmation_message text (you may append the order number naturally, nothing else). Do NOT rewrite it, do NOT add other payment details, and never suggest that another person or team will continue the conversation.",
+                  "Order saved successfully. These amounts are the ONLY truth about this order: products " +
+                  `${pricing.subtotal}, discount ${pricing.discount_total}, shipping ${shippingCost}, final total ${grandTotal} ${orderCurrency}. ` +
+                  "SHIPPING IS CHARGED ONCE PER ORDER and is already inside that final total" +
+                  (latestConversationOrder
+                    ? " — this was an update of an existing order, so never add the shipping cost again and never quote a total that counts shipping twice. " 
+                    : ". ") +
+                  "Never recompute or invent any amount. Your next reply MUST be exactly the confirmation_message text (you may append the order number naturally, nothing else). Do NOT rewrite it, do NOT add other payment details, and never suggest that another person or team will continue the conversation.",
               },
+
               createdOrderNumber: orderNumber,
               manualHandover,
             };
