@@ -3668,13 +3668,29 @@ export const Route = createFileRoute("/api/chat-ai")({
                 payment_method: chosenMethod?.name ?? null,
                 payment_guidance: paymentGuidance,
                 confirmation_message: confirmationMessage,
+                // AUTHORITATIVE amounts of the order as stored. Shipping is
+                // billed ONCE per order: on an amendment it is the same cost
+                // already on the order, never a second charge.
+                subtotal: pricing.subtotal,
+                discount: pricing.discount_total,
+                shipping_cost: shippingCost,
+                shipping_already_charged: Boolean(latestConversationOrder),
+                total: grandTotal,
+                currency: orderCurrency,
                 ...(quantityAdjustments.length
                   ? { quantity_adjustments: quantityAdjustments }
                   : {}),
 
                 message:
-                  "Order saved successfully. Your next reply MUST be exactly the confirmation_message text (you may append the order number naturally, nothing else). Do NOT rewrite it, do NOT add other payment details, and never suggest that another person or team will continue the conversation.",
+                  "Order saved successfully. These amounts are the ONLY truth about this order: products " +
+                  `${pricing.subtotal}, discount ${pricing.discount_total}, shipping ${shippingCost}, final total ${grandTotal} ${orderCurrency}. ` +
+                  "SHIPPING IS CHARGED ONCE PER ORDER and is already inside that final total" +
+                  (latestConversationOrder
+                    ? " — this was an update of an existing order, so never add the shipping cost again and never quote a total that counts shipping twice. " 
+                    : ". ") +
+                  "Never recompute or invent any amount. Your next reply MUST be exactly the confirmation_message text (you may append the order number naturally, nothing else). Do NOT rewrite it, do NOT add other payment details, and never suggest that another person or team will continue the conversation.",
               },
+
               createdOrderNumber: orderNumber,
               manualHandover,
             };
