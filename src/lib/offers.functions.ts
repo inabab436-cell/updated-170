@@ -130,13 +130,63 @@ export const listOffers = createServerFn({ method: "GET" }).handler(
       }
     }
 
+    // PENDING: orders that already carry the discount (pinned in
+    // applied_offer_ids) but whose payment is not confirmed yet. Those keep the
+    // discount for ever, yet they are NOT beneficiaries until payment.
+    const pendingByOffer = new Map<string, OfferPendingOrder[]>();
+    if (rows.length) {
+      try {
+        const { data: merchants } = await admin
+          .from("merchants")
+          .select("id")
+          .eq("user_id", userId);
+        const merchantIds = ((merchants ?? []) as any[]).map((m) => String(m.id));
+        if (merchantIds.length) {
+          const { data: pend } = await admin
+            .from("orders")
+            .select(
+              "id, order_number, conversation_id, customer_name, total_price, created_at, applied_offer_ids, payment_status",
+            )
+            .in("merchant_id", merchantIds)
+            .eq("payment_status", "pending")
+            .order("created_at", { ascending: false });
+          const known = new Set(rows.map((r) => r.id));
+          for (const o of ((pend ?? []) as any[])) {
+            const applied = Array.isArray(o.applied_offer_ids)
+              ? (o.applied_offer_ids as unknown[]).map(String)
+              : [];
+            for (const offerId of applied) {
+              if (!known.has(offerId)) continue;
+              const list = pendingByOffer.get(offerId) ?? [];
+              list.push({
+                id: String(o.id),
+                order_number: o.order_number ? String(o.order_number) : null,
+                conversation_id: o.conversation_id ? String(o.conversation_id) : null,
+                customer_name: o.customer_name ? String(o.customer_name) : null,
+                order_total: o.total_price == null ? null : Number(o.total_price),
+                created_at: String(o.created_at),
+              });
+              pendingByOffer.set(offerId, list);
+            }
+          }
+        }
+      } catch {
+        /* older databases without applied_offer_ids — no pending list */
+      }
+    }
+
     const now = Date.now();
     return rows.map((o) => ({
       ...o,
       product_name: o.product_id ? names.get(o.product_id) ?? null : null,
       state: isLive(o, now) ? "live" : hasEnded(o, now) ? "ended" : "scheduled",
       beneficiaries: byOffer.get(o.id) ?? [],
+      pending: pendingByOffer.get(o.id) ?? [],
       use_count: usesByOffer.get(o.id) ?? o.redemption_count,
+      limit_reached:
+        o.max_redemptions != null &&
+        o.max_redemptions > 0 &&
+        o.beneficiary_count >= o.max_redemptions,
     }));
   },
 );
