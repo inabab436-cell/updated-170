@@ -234,6 +234,22 @@ function LiveUsesScreen({ offer }: { offer: OfferDTO }) {
   );
 }
 
+/** Orders holding the discount while their payment is still unconfirmed. */
+function PendingScreen({ offer }: { offer: OfferDTO }) {
+  return (
+    <div className="flex-1 rounded-xl border border-border/60 bg-muted/40 p-3">
+      <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        <Users className="h-3.5 w-3.5" />
+        بانتظار تأكيد الدفع
+      </div>
+      <div dir="ltr" className="mt-1 text-lg font-semibold tabular-nums">
+        {offer.pending.length}
+      </div>
+    </div>
+  );
+}
+
+
 
 /** Client-side preview of the exact message customers will receive. */
 function previewMessage(f: FormState, productName: string | null): string {
